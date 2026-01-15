@@ -70,11 +70,13 @@ let loadingTimer = null;
 let lastStatsHeight = 0;
 const multiplayer = {
   enabled: false,
+  authoritative: false,
   socket: null,
   connected: false,
   connecting: false,
   playerId: null,
-  stateTimer: 0,
+  inputTimer: 0,
+  hasSnapshot: false,
   pendingJoin: false,
 };
 
@@ -234,9 +236,9 @@ const MAX_PLAYERS = 15;
 const MAX_PLAYERS_TDM = 14;
 const MULTIPLAYER_CONFIG = {
   defaultUrl: "wss://surge-io-production.up.railway.app",
-  stateInterval: 0.03,
+  inputInterval: 0.016,
   smoothing: 14,
-  snapDistance: 220,
+  snapDistance: 260,
 };
 const GAME_MODES = {
   multiplayer: { id: "multiplayer", label: "Multiplayer Arena" },
@@ -617,6 +619,8 @@ function disconnectMultiplayer() {
   multiplayer.connecting = false;
   multiplayer.playerId = null;
   multiplayer.pendingJoin = false;
+  multiplayer.inputTimer = 0;
+  multiplayer.hasSnapshot = false;
 }
 
 function sendMultiplayerJoin() {
@@ -638,49 +642,51 @@ function sendMultiplayerJoin() {
   multiplayer.pendingJoin = false;
 }
 
-function sendMultiplayerState() {
-  if (!multiplayer.connected || !multiplayer.socket || !localPlayer) return;
-  const state = {
-    x: localPlayer.x,
-    y: localPlayer.y,
-    vx: localPlayer.vx,
-    vy: localPlayer.vy,
-    energy: localPlayer.energy,
-    health: localPlayer.health,
-    radius: localPlayer.radius,
-    aim: localPlayer.aim,
-    firing: localPlayer.firing,
-    shooting: localPlayer.shooting,
-    bracing: localPlayer.bracing,
-    shieldCharge: localPlayer.shieldCharge,
-    shieldActive: localPlayer.shieldActive,
-    laserTime: localPlayer.laserTime,
-    ammo: localPlayer.ammo,
-    reloading: localPlayer.reloading,
-    kills: localPlayer.kills,
-    deaths: localPlayer.deaths,
-    score: localPlayer.score,
-    rushActive: localPlayer.rushActive,
-    tempoTime: localPlayer.tempoTime,
-    surgeTime: localPlayer.surgeTime,
-    streamBoostTime: localPlayer.streamBoostTime,
-    inStream: localPlayer.inStream,
+function buildInputPayload() {
+  let mx = 0;
+  let my = 0;
+  if (input.move.active) {
+    mx = input.move.x;
+    my = input.move.y;
+  } else {
+    if (input.keys["w"]) my -= 1;
+    if (input.keys["s"]) my += 1;
+    if (input.keys["a"]) mx -= 1;
+    if (input.keys["d"]) mx += 1;
+  }
+  let mag = Math.hypot(mx, my);
+  if (mag > 1) {
+    mx /= mag;
+    my /= mag;
+    mag = 1;
+  }
+
+  let aim = { x: 1, y: 0 };
+  if (input.aim.active) {
+    aim = normalize(input.aim.x, input.aim.y);
+  } else if (localPlayer) {
+    const mouseWorld = screenToWorld(input.mouse.x, input.mouse.y);
+    aim = normalize(mouseWorld.x - localPlayer.x, mouseWorld.y - localPlayer.y);
+  }
+
+  return {
+    moveX: mx,
+    moveY: my,
+    aimX: aim.x,
+    aimY: aim.y,
+    shooting: Boolean(input.mouse.down),
+    firing: Boolean(input.mouse.rightDown),
+    bracing: Boolean(input.keys["shift"] || input.keys["shiftleft"] || input.keys["shiftright"]),
+    rush: Boolean(input.keys["space"]),
+    reload: Boolean(input.keys["r"]),
   };
-  multiplayer.socket.send(JSON.stringify({ type: "state", id: localPlayer.id, state }));
 }
 
-function sendMultiplayerBullet(bullet) {
-  if (!multiplayer.connected || !multiplayer.socket) return;
-  const payload = {
-    x: bullet.x,
-    y: bullet.y,
-    vx: bullet.vx,
-    vy: bullet.vy,
-    ttl: bullet.ttl,
-    ownerId: bullet.ownerId,
-    color: bullet.color,
-  };
-  multiplayer.socket.send(JSON.stringify({ type: "bullet", bullet: payload }));
+function sendMultiplayerInput() {
+  if (!multiplayer.connected || !multiplayer.socket || !localPlayer) return;
+  if (!multiplayer.playerId || localPlayer.id !== multiplayer.playerId) return;
+  const payload = buildInputPayload();
+  multiplayer.socket.send(JSON.stringify({ type: "input", id: localPlayer.id, input: payload }));
 }
 
 function buildSkinFromNetwork(data) {
@@ -765,6 +771,7 @@ function removeRemotePlayer(id) {
 
 function syncBotPopulation() {
   if (!isMultiplayerMode()) return;
+  if (multiplayer.authoritative) return;
   const limit = getBotLimit();
   while (getBotCount() > limit) {
     const index = players.findIndex((player) => player.isBot);
@@ -773,6 +780,82 @@ function syncBotPopulation() {
   }
   while (getBotCount() < limit) {
     spawnBot();
+  }
+}
+
+function applySnapshot(snapshot) {
+  if (!snapshot || typeof snapshot !== "object") return;
+  if (typeof snapshot.time === "number") gameTime = snapshot.time;
+  if (snapshot.wave && typeof snapshot.wave === "object") {
+    wave.active = Boolean(snapshot.wave.active);
+    if (typeof snapshot.wave.radius === "number") wave.radius = snapshot.wave.radius;
+    if (typeof snapshot.wave.timer === "number") wave.timer = snapshot.wave.timer;
+    if (snapshot.wave.origin && typeof snapshot.wave.origin.x === "number") {
+      wave.origin.x = snapshot.wave.origin.x;
+      wave.origin.y = snapshot.wave.origin.y;
+    }
+  }
+
+  if (Array.isArray(snapshot.powerups)) {
+    powerups.length = 0;
+    snapshot.powerups.forEach((powerup) => {
+      if (!powerup) return;
+      powerups.push({ x: powerup.x, y: powerup.y });
+    });
+  }
+
+  if (Array.isArray(snapshot.relays)) {
+    relays.length = 0;
+    snapshot.relays.forEach((relay) => {
+      if (!relay) return;
+      relays.push({ x: relay.x, y: relay.y, active: relay.active, respawn: relay.respawn });
+    });
+  }
+
+  if (Array.isArray(snapshot.bullets)) {
+    bullets.length = 0;
+    snapshot.bullets.forEach((bullet) => {
+      if (!bullet) return;
+      bullets.push({
+        x: bullet.x,
+        y: bullet.y,
+        vx: bullet.vx,
+        vy: bullet.vy,
+        ttl: bullet.ttl,
+        ownerId: bullet.ownerId,
+        color: bullet.color,
+      });
+    });
+  }
+
+  if (Array.isArray(snapshot.players)) {
+    const seen = new Set();
+    snapshot.players.forEach((entry) => {
+      if (!entry || typeof entry !== "object") return;
+      const meta = entry.player || entry;
+      const state = entry.state || null;
+      if (!meta || !meta.id) return;
+      seen.add(meta.id);
+      if (localPlayer && meta.id === localPlayer.id) {
+        if (state) applyRemoteState(localPlayer, state);
+        if (meta.name) localPlayer.name = meta.name;
+        if (meta.skinId || meta.skinColor) {
+          const skin = buildSkinFromNetwork(meta);
+          localPlayer.skin = { ...skin };
+          localPlayer.color = localPlayer.skin.color || localPlayer.skin.accent || localPlayer.color;
+          localPlayer.handShieldColor = meta.shieldColor || localPlayer.handShieldColor;
+        }
+        return;
+      }
+      const remote = ensureRemotePlayer(meta);
+      if (remote && state) applyRemoteState(remote, state);
+    });
+
+    for (let i = players.length - 1; i >= 0; i--) {
+      const player = players[i];
+      if (player.isLocal) continue;
+      if (!seen.has(player.id)) players.splice(i, 1);
+    }
   }
 }
 
@@ -788,45 +871,12 @@ function handleMultiplayerMessage(message) {
     if (localPlayer && multiplayer.playerId && localPlayer.id !== multiplayer.playerId) {
       localPlayer.id = multiplayer.playerId;
     }
-    if (Array.isArray(message.players)) {
-      message.players.forEach((entry) => {
-        if (!entry || typeof entry !== "object") return;
-        const remote = ensureRemotePlayer(entry.player || entry);
-        if (remote && entry.state) applyRemoteState(remote, entry.state);
-      });
-    }
-    syncBotPopulation();
+    multiplayer.hasSnapshot = false;
     return;
   }
-  if (message.type === "player-joined") {
-    const remote = ensureRemotePlayer(message.player);
-    if (remote && message.state) applyRemoteState(remote, message.state);
-    syncBotPopulation();
-    return;
-  }
-  if (message.type === "player-left") {
-    if (message.id && (!localPlayer || message.id !== localPlayer.id)) {
-      removeRemotePlayer(message.id);
-      syncBotPopulation();
-    }
-    return;
-  }
-  if (message.type === "state") {
-    const remote = ensureRemotePlayer({ id: message.id });
-    if (remote) applyRemoteState(remote, message.state);
-    return;
-  }
-  if (message.type === "bullet" && message.bullet) {
-    const bullet = message.bullet;
-    bullets.push({
-      x: bullet.x,
-      y: bullet.y,
-      vx: bullet.vx,
-      vy: bullet.vy,
-      ttl: bullet.ttl,
-      ownerId: bullet.ownerId,
-      color: bullet.color,
-    });
+  if (message.type === "snapshot") {
+    applySnapshot(message.snapshot);
+    multiplayer.hasSnapshot = true;
   }
 }
 
@@ -1470,6 +1520,7 @@ function showMenu(
   if (multiplayer.enabled) {
     disconnectMultiplayer();
     multiplayer.enabled = false;
+    multiplayer.authoritative = false;
   }
   updateMenuMode();
   if (nameInput && menuMode === "start") nameInput.focus();
@@ -1489,12 +1540,14 @@ function startGame() {
   currentBotDifficulty = selectedBotDifficulty;
   if (wantsMultiplayer) {
     multiplayer.enabled = true;
+    multiplayer.authoritative = true;
     if (!connectMultiplayer()) {
       showMenu("Multiplayer needs a server URL.", "start", "");
       return;
     }
   } else {
     multiplayer.enabled = false;
+    multiplayer.authoritative = false;
     disconnectMultiplayer();
   }
   saveSettings();
@@ -1508,7 +1561,7 @@ function startGame() {
   startMusic();
   initGame(name, skin, shieldColor);
   if (wantsMultiplayer) {
-    multiplayer.stateTimer = 0;
+    multiplayer.inputTimer = 0;
     sendMultiplayerJoin();
   }
   menu.classList.remove("show");
@@ -2408,7 +2461,7 @@ function initGame(name, skin, shieldColor) {
   assignSpawn(localPlayer, null);
   players.push(localPlayer);
   if (isMultiplayerMode()) {
-    syncBotPopulation();
+    if (!multiplayer.authoritative) syncBotPopulation();
   } else {
     for (let i = 0; i < getBotLimit(); i++) spawnBot();
   }
@@ -3416,10 +3469,6 @@ function tryFireGun(player) {
     ownerId: player.id,
     color: player.color,
   });
-  if (multiplayer.enabled && player.isLocal) {
-    const bullet = bullets[bullets.length - 1];
-    if (bullet) sendMultiplayerBullet(bullet);
-  }
 
   player.vx -= dir.x * 22;
   player.vy -= dir.y * 22;
@@ -3785,16 +3834,215 @@ function updateRemotePlayer(player, dt) {
   }
 }
 
-function update(dt) {
-  if (!gameActive) return;
-  gameTime += dt;
-  if (multiplayer.enabled && multiplayer.connected && localPlayer) {
-    multiplayer.stateTimer += dt;
-    if (multiplayer.stateTimer >= MULTIPLAYER_CONFIG.stateInterval) {
-      multiplayer.stateTimer = 0;
-      sendMultiplayerState();
+function updateLocalPrediction(player, dt) {
+  if (!player) return;
+  applyInput(player, dt);
+
+  if (player.surgeCooldown > 0) player.surgeCooldown -= dt;
+  if (player.tempoTime > 0) player.tempoTime -= dt;
+  if (player.gunCooldown > 0) player.gunCooldown -= dt;
+  if (player.laserTime > 0) player.laserTime -= dt;
+  if (player.reloadTime > 0) player.reloadTime -= dt;
+  if (player.braceCooldown > 0) player.braceCooldown -= dt;
+  if (player.braceCooldown <= 0 && player.braceTime <= 0) {
+    player.braceTime = CONFIG.brace.duration;
+  }
+  if (player.streamCooldown > 0 && player.streamBoostTime <= 0) {
+    player.streamCooldown -= dt;
+  }
+  if (player.streamBoostTime > 0) {
+    player.streamBoostTime -= dt;
+    if (player.streamBoostTime <= 0) {
+      player.streamBoostTime = 0;
+      player.streamCooldown = CONFIG.streamBoost.cooldown;
     }
   }
+
+  if (player.braceRequest && player.braceCooldown <= 0 && player.braceTime > 0) {
+    player.bracing = true;
+    player.braceTime -= dt;
+    if (player.braceTime <= 0) {
+      player.braceTime = 0;
+      player.bracing = false;
+      player.braceCooldown = CONFIG.brace.cooldown;
+    }
+  } else {
+    player.bracing = false;
+  }
+
+  if (player.reloadTime <= 0 && player.reloading) {
+    player.reloading = false;
+    player.ammo = CONFIG.ammo.max;
+  }
+
+  if (input.keys["r"] && !player.reloading && player.ammo < CONFIG.ammo.max) {
+    player.reloading = true;
+    player.reloadTime = CONFIG.ammo.reloadTime;
+  }
+
+  player.shieldActive = player.firing && player.shieldCharge > 0;
+  if (player.shieldActive) {
+    player.shieldCharge = Math.max(
+      0,
+      player.shieldCharge - CONFIG.pulseShield.drainPerSec * dt
+    );
+    if (player.shieldCharge <= 0) player.shieldActive = false;
+  } else if (!player.firing) {
+    player.shieldCharge = Math.min(
+      CONFIG.pulseShield.maxCharge,
+      player.shieldCharge + CONFIG.pulseShield.rechargePerSec * dt
+    );
+  }
+
+  if (player.rushActive) {
+    player.surgeTime -= dt;
+    if (player.surgeTime <= 0) {
+      player.surgeTime = 0;
+      player.rushActive = false;
+      player.surgeCooldown = CONFIG.surge.cooldown;
+    }
+  }
+
+  if (!player.rushActive && player.rushRequest && player.surgeCooldown <= 0) {
+    player.surgeTime = CONFIG.surge.duration;
+    player.rushActive = true;
+  }
+
+  const zone = zoneAt(player.x, player.y);
+  if (zone && zone.type === "stream") {
+    player.vx += zone.dir.x * zone.current * dt;
+    player.vy += zone.dir.y * zone.current * dt;
+  }
+
+  const speed = Math.hypot(player.vx, player.vy);
+  const speedMult =
+    (player.rushActive ? CONFIG.surge.speedMult : 1) *
+    (player.tempoTime > 0 ? CONFIG.tempo.speedMult : 1);
+  const energySpeed = 1 + Math.min(Math.sqrt(player.energy) * 0.008, 0.8);
+  const maxSpeed = CONFIG.player.maxSpeed * speedMult * energySpeed;
+  if (speed > maxSpeed) {
+    const s = maxSpeed / speed;
+    player.vx *= s;
+    player.vy *= s;
+  }
+
+  const frameScale = dt * 60;
+  const drag = Math.pow(CONFIG.player.drag, frameScale);
+  player.vx *= drag;
+  player.vy *= drag;
+
+  if (player.bracing) {
+    const braceDrag = Math.pow(0.9, frameScale);
+    player.vx *= braceDrag;
+    player.vy *= braceDrag;
+  }
+
+  player.x += player.vx * dt;
+  player.y += player.vy * dt;
+
+  if (player.x < 0 || player.x > CONFIG.world.w || player.y < 0 || player.y > CONFIG.world.h) {
+    player.x = clamp(player.x, 0, CONFIG.world.w);
+    player.y = clamp(player.y, 0, CONFIG.world.h);
+    player.vx *= -0.4;
+    player.vy *= -0.4;
+  }
+
+  const target = player.net ? player.net.target : null;
+  if (target && typeof target.x === "number" && typeof target.y === "number") {
+    const dx = target.x - player.x;
+    const dy = target.y - player.y;
+    const dist = Math.hypot(dx, dy);
+    if (dist > MULTIPLAYER_CONFIG.snapDistance) {
+      player.x = target.x;
+      player.y = target.y;
+    } else {
+      player.x = smoothValue(player.x, target.x, dt, MULTIPLAYER_CONFIG.smoothing);
+      player.y = smoothValue(player.y, target.y, dt, MULTIPLAYER_CONFIG.smoothing);
+    }
+  }
+}
+
+function updateBulletsVisual(dt) {
+  for (let i = bullets.length - 1; i >= 0; i--) {
+    const bullet = bullets[i];
+    bullet.ttl -= dt;
+    bullet.x += bullet.vx * dt;
+    bullet.y += bullet.vy * dt;
+    if (
+      bullet.ttl <= 0 ||
+      bullet.x < -50 ||
+      bullet.y < -50 ||
+      bullet.x > CONFIG.world.w + 50 ||
+      bullet.y > CONFIG.world.h + 50
+    ) {
+      bullets.splice(i, 1);
+    }
+  }
+}
+
+function updateTrailsVisual(dt) {
+  for (const player of players) {
+    player.trailTimer += dt;
+    const moved = Math.hypot(player.x - player.lastTrail.x, player.y - player.lastTrail.y);
+    if (player.trailTimer >= CONFIG.trail.interval || moved > CONFIG.trail.minDist) {
+      player.trailTimer = 0;
+      player.lastTrail.x = player.x;
+      player.lastTrail.y = player.y;
+      const zoneHere = zoneAt(player.x, player.y);
+      const tempoMult = player.tempoTime > 0 ? CONFIG.tempo.trailMult : 1;
+      const ttlBase = zoneHere && zoneHere.trailTtl ? zoneHere.trailTtl : CONFIG.trail.baseTtl;
+      const ttl = ttlBase;
+      trailSegments.push({
+        x: player.x,
+        y: player.y,
+        ownerId: player.id,
+        ttl,
+        ttlMax: ttl,
+        value: CONFIG.trail.value * tempoMult,
+        hot: false,
+      });
+    }
+  }
+
+  for (let i = trailSegments.length - 1; i >= 0; i--) {
+    trailSegments[i].ttl -= dt;
+    if (trailSegments[i].ttl <= 0) trailSegments.splice(i, 1);
+  }
+}
+
+function update(dt) {
+  if (!gameActive) return;
+  if (multiplayer.enabled && multiplayer.authoritative) {
+    if (multiplayer.connected && localPlayer) {
+      multiplayer.inputTimer += dt;
+      if (multiplayer.inputTimer >= MULTIPLAYER_CONFIG.inputInterval) {
+        multiplayer.inputTimer = 0;
+        sendMultiplayerInput();
+      }
+    }
+    if (localPlayer) updateLocalPrediction(localPlayer, dt);
+    for (const player of players) {
+      if (player.isLocal) continue;
+      updateRemotePlayer(player, dt);
+    }
+    updateBulletsVisual(dt);
+    updateTrailsVisual(dt);
+    updateHitBursts(dt);
+    updateDeathBursts(dt);
+    updateHints(dt);
+    if (killCardTimer > 0) {
+      killCardTimer -= dt;
+      if (killCardTimer <= 0 && killCard) {
+        killCard.classList.remove("show");
+      }
+      if (killCardTimer <= 0 && killPraise) {
+        killPraise.classList.remove("show");
+      }
+    }
+    return;
+  }
+
+  gameTime += dt;
   for (let i = botRespawns.length - 1; i >= 0; i--) {
     botRespawns[i] -= dt;
     if (botRespawns[i] <= 0) {
