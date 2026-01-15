@@ -1,0 +1,216 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Surge.io</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <div id="menu" class="menu">
+    <div class="menu-hero-title">Surge.io</div>
+    <div class="menu-card menu-start">
+      <div class="menu-layout">
+        <div class="menu-left">
+          <div class="menu-tip">
+            <div class="menu-tip-title">Controls</div>
+            <div class="menu-tip-grid">
+              <div class="menu-tip-row"><span class="menu-key">WASD</span><span class="menu-action">Move</span></div>
+              <div class="menu-tip-row"><span class="menu-key">Left Click</span><span class="menu-action">Attack</span></div>
+              <div class="menu-tip-row"><span class="menu-key">Right Click</span><span class="menu-action">Ray shield</span></div>
+              <div class="menu-tip-row"><span class="menu-key">Shift</span><span class="menu-action">Shield</span></div>
+              <div class="menu-tip-row"><span class="menu-key">R</span><span class="menu-action">Reload</span></div>
+              <div class="menu-tip-row"><span class="menu-key">Space</span><span class="menu-action">Echo Rush</span></div>
+            </div>
+          </div>
+          <div class="menu-tip">
+            <div class="menu-tip-title">Game Details</div>
+            <div class="menu-tip-grid">
+              <div class="menu-tip-row"><span class="menu-key">Stream Zone</span><span class="menu-action">2x energy for 5s (15s CD)</span></div>
+              <div class="menu-tip-row"><span class="menu-key">Core Zone</span><span class="menu-action">High bonus, constant damage</span></div>
+              <div class="menu-tip-row"><span class="menu-key">Bramble Zone</span><span class="menu-action">Heavy damage over time</span></div>
+              <div class="menu-tip-row"><span class="menu-key">Glimmer Zone</span><span class="menu-action">Slow health regen</span></div>
+              <div class="menu-tip-row"><span class="menu-key">Zone Surge</span><span class="menu-action">Surge sweeps deal big damage; Shield blocks it, use wisely</span></div>
+            </div>
+          </div>
+          <div class="menu-audio">
+            <div class="menu-tip-title">Audio</div>
+            <div class="menu-toggles">
+              <label class="toggle">
+                <input id="musicToggle" type="checkbox" checked />
+                <span class="toggle-ui"></span>
+                <span class="toggle-text">Music</span>
+              </label>
+              <label class="toggle">
+                <input id="sfxToggle" type="checkbox" checked />
+                <span class="toggle-ui"></span>
+                <span class="toggle-text">SFX</span>
+              </label>
+            </div>
+            <div class="menu-sliders">
+              <label class="slider-row">
+                <span class="slider-label">Music Volume</span>
+                <input id="musicVolume" type="range" min="0" max="100" value="26" />
+              </label>
+              <label class="slider-row">
+                <span class="slider-label">SFX Volume</span>
+                <input id="sfxVolume" type="range" min="0" max="100" value="55" />
+              </label>
+            </div>
+          </div>
+        </div>
+        <div class="menu-main">
+          <label class="menu-field">
+            <span>Name</span>
+            <input id="nameInput" type="text" maxlength="16" placeholder="Pilot" />
+          </label>
+          <div class="menu-field">
+            <span>Remember</span>
+            <label class="toggle" for="rememberToggle">
+              <input id="rememberToggle" type="checkbox" checked />
+              <span class="toggle-ui"></span>
+              <span class="toggle-text">Remember this pilot on this device</span>
+            </label>
+          </div>
+          <div class="menu-field">
+            <span>Skin</span>
+            <div class="skin-select">
+              <div id="skinPreview" class="skin-preview"></div>
+              <div class="skin-meta">
+                <div id="skinName" class="skin-name">Custom Color</div>
+                <button id="skinBtn" class="skin-btn" type="button">Change Skin</button>
+              </div>
+            </div>
+          </div>
+          <div class="menu-field">
+            <span>Shield</span>
+            <div class="skin-select">
+              <div id="shieldPreview" class="shield-preview"></div>
+              <div class="skin-meta">
+                <div class="skin-name">Shield Color</div>
+                <button id="shieldBtn" class="skin-btn" type="button">Change Shield</button>
+              </div>
+            </div>
+          </div>
+          <label class="menu-field">
+            <span>Mode</span>
+            <select id="modeSelect">
+              <option value="energy">Energy Rush (First to 10,000)</option>
+              <option value="multiplayer">Multiplayer Arena (15 player cap)</option>
+              <option value="kills">Kill Race (First to 30 kills)</option>
+              <option value="hill">King of the Hill (3:00, most kills)</option>
+              <option value="tdm">Team Deathmatch (Red vs Blue)</option>
+            </select>
+          </label>
+          <label class="menu-field">
+            <span>Bot Difficulty</span>
+            <select id="botDifficultySelect">
+              <option value="easy">Easy</option>
+              <option value="normal" selected>Normal</option>
+              <option value="hard">Hard</option>
+            </select>
+          </label>
+          <button id="playBtn">Play</button>
+          <div class="menu-actions">
+            <button id="touchLayoutBtn" class="menu-alt-btn" type="button">Touch Layout</button>
+          </div>
+          <div id="menuStatus" class="menu-status">First to 10,000 energy wins.</div>
+          <div id="menuRoast" class="menu-roast"></div>
+          <div id="menuMeta" class="menu-meta"></div>
+        </div>
+      </div>
+    </div>
+    <div class="menu-card menu-end">
+      <div id="endTitle" class="menu-title">Defeated</div>
+      <div id="endRoast" class="menu-roast"></div>
+      <div id="endMeta" class="menu-meta"></div>
+      <button id="endContinue" class="end-continue" type="button">Continue</button>
+    </div>
+    <div id="skinMenu" class="skin-menu">
+      <div class="skin-card">
+        <div class="skin-header">
+          <div class="skin-title">Select Skin</div>
+          <button id="skinClose" class="skin-close" type="button">Done</button>
+        </div>
+        <div id="skinGrid" class="skin-grid"></div>
+        <label class="menu-field skin-color-field">
+          <span>Custom Color</span>
+          <input id="colorInput" type="color" value="#72e6ff" />
+        </label>
+      </div>
+    </div>
+    <div id="shieldMenu" class="skin-menu">
+      <div class="skin-card">
+        <div class="skin-header">
+          <div class="skin-title">Hand Shield Color</div>
+          <button id="shieldClose" class="skin-close" type="button">Done</button>
+        </div>
+        <label class="menu-field skin-color-field">
+          <span>Shield Color</span>
+          <input id="shieldColorInput" type="color" value="#72e6ff" />
+        </label>
+      </div>
+    </div>
+  </div>
+  <div id="loading" class="loading-screen">
+    <div class="loading-card">
+      <div class="loading-title">Launching</div>
+      <div class="loading-subtitle">Syncing systems</div>
+      <div class="loading-bar"><span></span></div>
+    </div>
+  </div>
+  <canvas id="game"></canvas>
+  <div id="crosshair" class="crosshair"></div>
+  <div id="damage-vignette" class="damage-vignette"></div>
+  <div id="ui">
+    <div id="topbar">
+      <div id="title">Surge.io</div>
+      <div id="matchTimer" class="match-timer"></div>
+      <div id="stats"></div>
+    </div>
+    <div id="reload-indicator" class="reload-indicator">R to reload</div>
+    <div id="rush-indicator" class="rush-indicator">Echo Rush Active</div>
+    <div id="beam-indicator" class="beam-indicator">Laser Beam Online</div>
+    <div id="stream-indicator" class="stream-indicator"></div>
+    <div id="zone-indicator" class="zone-indicator"></div>
+    <div id="killPraise" class="kill-praise"></div>
+    <div id="kill-card" class="kill-card"></div>
+    <div id="leaderboard">
+      <div class="lb-title">Leaderboard</div>
+      <ol id="lb-list"></ol>
+    </div>
+    <div id="hints"></div>
+    <canvas id="minimap" width="180" height="180"></canvas>
+  </div>
+  <div id="touch-controls" class="touch-controls">
+    <div id="touch-move" class="touch-joystick">
+      <div class="joy-base"></div>
+      <div class="joy-stick"></div>
+    </div>
+    <div id="touch-aim" class="touch-joystick touch-aim">
+      <div class="joy-base"></div>
+      <div class="joy-stick"></div>
+    </div>
+    <div id="touch-buttons" class="touch-buttons">
+      <button id="touch-ray" class="touch-btn" type="button">Ray</button>
+      <button id="touch-shield" class="touch-btn" type="button">Shield</button>
+      <button id="touch-reload" class="touch-btn" type="button">Reload</button>
+      <button id="touch-rush" class="touch-btn" type="button">Rush</button>
+    </div>
+  </div>
+  <div id="touch-layout" class="touch-layout">
+    <div class="touch-layout-card">
+      <div class="touch-layout-title">Touch Layout</div>
+      <div class="touch-layout-text">Drag the joysticks or button cluster to reposition.</div>
+      <div class="touch-layout-actions">
+        <button id="touch-layout-reset" class="menu-alt-btn" type="button">Reset</button>
+        <button id="touch-layout-done" class="menu-alt-btn" type="button">Done</button>
+      </div>
+    </div>
+  </div>
+  <script src="game.js"></script>
+</body>
+</html>
+
+
+
