@@ -68,6 +68,15 @@ let damagePulse = 0;
 let isStarting = false;
 let loadingTimer = null;
 let lastStatsHeight = 0;
+const multiplayer = {
+  enabled: false,
+  socket: null,
+  connected: false,
+  connecting: false,
+  playerId: null,
+  stateTimer: 0,
+  pendingJoin: false,
+};
 
 const CONFIG = {
   world: { w: 3600, h: 3600 },
@@ -223,6 +232,10 @@ const SETTINGS_KEY = "echo-drift-settings";
 const PERSIST_SETTINGS = true;
 const MAX_PLAYERS = 15;
 const MAX_PLAYERS_TDM = 14;
+const MULTIPLAYER_CONFIG = {
+  defaultUrl: "",
+  stateInterval: 0.05,
+};
 const GAME_MODES = {
   multiplayer: { id: "multiplayer", label: "Multiplayer Arena" },
   energy: { id: "energy", label: "Energy Rush" },
@@ -535,6 +548,277 @@ function cloneTouchLayout(layout) {
     aim: layout.aim ? { ...layout.aim } : undefined,
     buttons: layout.buttons ? { ...layout.buttons } : undefined,
   };
+}
+
+function getMultiplayerServerUrl() {
+  const params = new URLSearchParams(window.location.search);
+  const fromQuery = params.get("server");
+  if (fromQuery) return fromQuery;
+  if (MULTIPLAYER_CONFIG.defaultUrl) return MULTIPLAYER_CONFIG.defaultUrl;
+  if (window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1") {
+    return "ws://localhost:8080";
+  }
+  return "";
+}
+
+function connectMultiplayer() {
+  if (multiplayer.connected || multiplayer.connecting) return true;
+  const url = getMultiplayerServerUrl();
+  if (!url) {
+    if (menuStatus && menuMode === "start") {
+      menuStatus.textContent = "Multiplayer needs a server URL (?server=wss://...).";
+    }
+    return false;
+  }
+  if (typeof WebSocket === "undefined") return false;
+  try {
+    multiplayer.connecting = true;
+    multiplayer.socket = new WebSocket(url);
+  } catch (err) {
+    multiplayer.connecting = false;
+    return false;
+  }
+  multiplayer.socket.addEventListener("open", () => {
+    multiplayer.connected = true;
+    multiplayer.connecting = false;
+    if (multiplayer.pendingJoin) sendMultiplayerJoin();
+  });
+  multiplayer.socket.addEventListener("message", (event) => {
+    let message = null;
+    try {
+      message = JSON.parse(event.data);
+    } catch (err) {
+      return;
+    }
+    if (!message || typeof message !== "object") return;
+    handleMultiplayerMessage(message);
+  });
+  multiplayer.socket.addEventListener("close", () => {
+    multiplayer.connected = false;
+    multiplayer.connecting = false;
+    multiplayer.playerId = null;
+    multiplayer.pendingJoin = false;
+  });
+  multiplayer.socket.addEventListener("error", () => {
+    multiplayer.connected = false;
+    multiplayer.connecting = false;
+  });
+  return true;
+}
+
+function disconnectMultiplayer() {
+  if (multiplayer.socket) {
+    multiplayer.socket.close();
+  }
+  multiplayer.socket = null;
+  multiplayer.connected = false;
+  multiplayer.connecting = false;
+  multiplayer.playerId = null;
+  multiplayer.pendingJoin = false;
+}
+
+function sendMultiplayerJoin() {
+  if (!multiplayer.socket || multiplayer.socket.readyState !== WebSocket.OPEN) {
+    multiplayer.pendingJoin = true;
+    return;
+  }
+  if (!localPlayer) return;
+  const skin = localPlayer.skin || makeColorSkin(palette[0]);
+  const player = {
+    id: localPlayer.id,
+    name: localPlayer.name,
+    skinId: skin.id,
+    skinColor: skin.type === "color" ? skin.color || palette[0] : null,
+    shieldColor: localPlayer.handShieldColor,
+    team: localPlayer.team,
+  };
+  multiplayer.socket.send(JSON.stringify({ type: "join", player }));
+  multiplayer.pendingJoin = false;
+}
+
+function sendMultiplayerState() {
+  if (!multiplayer.connected || !multiplayer.socket || !localPlayer) return;
+  const state = {
+    x: localPlayer.x,
+    y: localPlayer.y,
+    vx: localPlayer.vx,
+    vy: localPlayer.vy,
+    energy: localPlayer.energy,
+    health: localPlayer.health,
+    radius: localPlayer.radius,
+    aim: localPlayer.aim,
+    firing: localPlayer.firing,
+    shooting: localPlayer.shooting,
+    bracing: localPlayer.bracing,
+    shieldCharge: localPlayer.shieldCharge,
+    shieldActive: localPlayer.shieldActive,
+    laserTime: localPlayer.laserTime,
+    ammo: localPlayer.ammo,
+    reloading: localPlayer.reloading,
+    kills: localPlayer.kills,
+    deaths: localPlayer.deaths,
+    score: localPlayer.score,
+    rushActive: localPlayer.rushActive,
+    tempoTime: localPlayer.tempoTime,
+    surgeTime: localPlayer.surgeTime,
+    streamBoostTime: localPlayer.streamBoostTime,
+    inStream: localPlayer.inStream,
+  };
+  multiplayer.socket.send(JSON.stringify({ type: "state", id: localPlayer.id, state }));
+}
+
+function sendMultiplayerBullet(bullet) {
+  if (!multiplayer.connected || !multiplayer.socket) return;
+  const payload = {
+    x: bullet.x,
+    y: bullet.y,
+    vx: bullet.vx,
+    vy: bullet.vy,
+    ttl: bullet.ttl,
+    ownerId: bullet.ownerId,
+    color: bullet.color,
+  };
+  multiplayer.socket.send(JSON.stringify({ type: "bullet", bullet: payload }));
+}
+
+function buildSkinFromNetwork(data) {
+  const fallback = makeColorSkin(palette[0]);
+  if (!data || typeof data !== "object") return fallback;
+  const skin = skins.find((item) => item.id === data.skinId) || fallback;
+  if (skin.type === "color") {
+    const color = typeof data.skinColor === "string" ? data.skinColor : skin.color || palette[0];
+    return makeColorSkin(color);
+  }
+  return skin;
+}
+
+function applyRemoteState(player, state) {
+  if (!player || !state || typeof state !== "object") return;
+  if (typeof state.x === "number") player.x = state.x;
+  if (typeof state.y === "number") player.y = state.y;
+  if (typeof state.vx === "number") player.vx = state.vx;
+  if (typeof state.vy === "number") player.vy = state.vy;
+  if (typeof state.energy === "number") player.energy = state.energy;
+  if (typeof state.health === "number") player.health = state.health;
+  if (typeof state.radius === "number") player.radius = state.radius;
+  if (state.aim && typeof state.aim.x === "number" && typeof state.aim.y === "number") {
+    player.aim = { x: state.aim.x, y: state.aim.y };
+  }
+  if (typeof state.firing === "boolean") player.firing = state.firing;
+  if (typeof state.shooting === "boolean") player.shooting = state.shooting;
+  if (typeof state.bracing === "boolean") player.bracing = state.bracing;
+  if (typeof state.shieldCharge === "number") player.shieldCharge = state.shieldCharge;
+  if (typeof state.shieldActive === "boolean") player.shieldActive = state.shieldActive;
+  if (typeof state.laserTime === "number") player.laserTime = state.laserTime;
+  if (typeof state.ammo === "number") player.ammo = state.ammo;
+  if (typeof state.reloading === "boolean") player.reloading = state.reloading;
+  if (typeof state.kills === "number") player.kills = state.kills;
+  if (typeof state.deaths === "number") player.deaths = state.deaths;
+  if (typeof state.score === "number") player.score = state.score;
+  if (typeof state.rushActive === "boolean") player.rushActive = state.rushActive;
+  if (typeof state.tempoTime === "number") player.tempoTime = state.tempoTime;
+  if (typeof state.surgeTime === "number") player.surgeTime = state.surgeTime;
+  if (typeof state.streamBoostTime === "number") player.streamBoostTime = state.streamBoostTime;
+  if (typeof state.inStream === "boolean") player.inStream = state.inStream;
+}
+
+function ensureRemotePlayer(playerData) {
+  if (!playerData || typeof playerData !== "object") return null;
+  if (localPlayer && playerData.id === localPlayer.id) return null;
+  const existing = players.find((player) => player.id === playerData.id) || null;
+  if (existing) {
+    if (playerData.name) existing.name = playerData.name;
+    if (playerData.skinId || playerData.skinColor) {
+      const skin = buildSkinFromNetwork(playerData);
+      existing.skin = { ...skin };
+      existing.color = existing.skin.color || existing.skin.accent || existing.color;
+      existing.handShieldColor = playerData.shieldColor || existing.handShieldColor;
+    }
+    if (playerData.team) existing.team = playerData.team;
+    return existing;
+  }
+  const skin = buildSkinFromNetwork(playerData);
+  const remote = createPlayer(playerData.name || "Pilot", false, skin, playerData.shieldColor, playerData.team);
+  remote.id = playerData.id || remote.id;
+  remote.isBot = false;
+  remote.isRemote = true;
+  remote.botTuning = null;
+  players.push(remote);
+  return remote;
+}
+
+function removeRemotePlayer(id) {
+  const index = players.findIndex((player) => player.id === id);
+  if (index >= 0) {
+    players.splice(index, 1);
+  }
+}
+
+function syncBotPopulation() {
+  if (!isMultiplayerMode()) return;
+  const limit = getBotLimit();
+  while (getBotCount() > limit) {
+    const index = players.findIndex((player) => player.isBot);
+    if (index < 0) break;
+    players.splice(index, 1);
+  }
+  while (getBotCount() < limit) {
+    spawnBot();
+  }
+}
+
+function handleMultiplayerMessage(message) {
+  if (message.type === "full") {
+    disconnectMultiplayer();
+    showMenu("Server full", "start", "Try again later.");
+    return;
+  }
+  if (message.type === "welcome") {
+    multiplayer.connected = true;
+    multiplayer.playerId = message.id || multiplayer.playerId;
+    if (localPlayer && multiplayer.playerId && localPlayer.id !== multiplayer.playerId) {
+      localPlayer.id = multiplayer.playerId;
+    }
+    if (Array.isArray(message.players)) {
+      message.players.forEach((entry) => {
+        if (!entry || typeof entry !== "object") return;
+        const remote = ensureRemotePlayer(entry.player || entry);
+        if (remote && entry.state) applyRemoteState(remote, entry.state);
+      });
+    }
+    syncBotPopulation();
+    return;
+  }
+  if (message.type === "player-joined") {
+    const remote = ensureRemotePlayer(message.player);
+    if (remote && message.state) applyRemoteState(remote, message.state);
+    syncBotPopulation();
+    return;
+  }
+  if (message.type === "player-left") {
+    if (message.id && (!localPlayer || message.id !== localPlayer.id)) {
+      removeRemotePlayer(message.id);
+      syncBotPopulation();
+    }
+    return;
+  }
+  if (message.type === "state") {
+    const remote = ensureRemotePlayer({ id: message.id });
+    if (remote) applyRemoteState(remote, message.state);
+    return;
+  }
+  if (message.type === "bullet" && message.bullet) {
+    const bullet = message.bullet;
+    bullets.push({
+      x: bullet.x,
+      y: bullet.y,
+      vx: bullet.vx,
+      vy: bullet.vy,
+      ttl: bullet.ttl,
+      ownerId: bullet.ownerId,
+      color: bullet.color,
+    });
+  }
 }
 
 function shouldPersistSettings() {
@@ -1174,6 +1458,10 @@ function showMenu(
   if (endTitle) endTitle.textContent = mode === "victory" ? "Victory" : "Defeated";
   if (endRoast) endRoast.textContent = detail;
   if (endMeta) endMeta.textContent = meta;
+  if (multiplayer.enabled) {
+    disconnectMultiplayer();
+    multiplayer.enabled = false;
+  }
   updateMenuMode();
   if (nameInput && menuMode === "start") nameInput.focus();
   if (menuMode === "victory") playSfx("victory");
@@ -1185,10 +1473,21 @@ function startGame() {
   const name = nameInput.value.trim() || "Pilot";
   const skin = getSelectedSkin();
   const shieldColor = shieldColorInput ? shieldColorInput.value : selectedShieldColor;
+  const wantsMultiplayer = isMultiplayerMode();
   if (botDifficultySelect) {
     selectedBotDifficulty = botDifficultySelect.value;
   }
   currentBotDifficulty = selectedBotDifficulty;
+  if (wantsMultiplayer) {
+    multiplayer.enabled = true;
+    if (!connectMultiplayer()) {
+      showMenu("Multiplayer needs a server URL.", "start", "");
+      return;
+    }
+  } else {
+    multiplayer.enabled = false;
+    disconnectMultiplayer();
+  }
   saveSettings();
   ensureAudio();
   setMusicEnabled(musicToggle.checked);
@@ -1199,6 +1498,10 @@ function startGame() {
   if (audio.sfxEnabled) audio.sfxGain.gain.value = audio.sfxLevel;
   startMusic();
   initGame(name, skin, shieldColor);
+  if (wantsMultiplayer) {
+    multiplayer.stateTimer = 0;
+    sendMultiplayerJoin();
+  }
   menu.classList.remove("show");
   menu.classList.remove("victory", "defeat");
   ui.classList.remove("hidden");
@@ -1572,6 +1875,7 @@ function playHitMarker(player) {
 }
 
 function applyDamage(target, amount, attacker = null) {
+  if (multiplayer.enabled && target.isRemote) return false;
   if (target.bracing) {
     playHitMarker(target);
     playHitMarker(attacker);
@@ -2087,7 +2391,11 @@ function initGame(name, skin, shieldColor) {
   localPlayer = createPlayer(name, true, skin, shieldColor, localTeam);
   assignSpawn(localPlayer, null);
   players.push(localPlayer);
-  for (let i = 0; i < getBotLimit(); i++) spawnBot();
+  if (isMultiplayerMode()) {
+    syncBotPopulation();
+  } else {
+    for (let i = 0; i < getBotLimit(); i++) spawnBot();
+  }
 }
 
 const wave = {
@@ -3092,6 +3400,10 @@ function tryFireGun(player) {
     ownerId: player.id,
     color: player.color,
   });
+  if (multiplayer.enabled && player.isLocal) {
+    const bullet = bullets[bullets.length - 1];
+    if (bullet) sendMultiplayerBullet(bullet);
+  }
 
   player.vx -= dir.x * 22;
   player.vy -= dir.y * 22;
@@ -3426,9 +3738,26 @@ function respawn(player) {
   }
 }
 
+function updateRemotePlayer(player, dt) {
+  if (!player) return;
+  player.x += player.vx * dt;
+  player.y += player.vy * dt;
+  if (player.x < 0 || player.x > CONFIG.world.w || player.y < 0 || player.y > CONFIG.world.h) {
+    player.x = clamp(player.x, 0, CONFIG.world.w);
+    player.y = clamp(player.y, 0, CONFIG.world.h);
+  }
+}
+
 function update(dt) {
   if (!gameActive) return;
   gameTime += dt;
+  if (multiplayer.enabled && multiplayer.connected && localPlayer) {
+    multiplayer.stateTimer += dt;
+    if (multiplayer.stateTimer >= MULTIPLAYER_CONFIG.stateInterval) {
+      multiplayer.stateTimer = 0;
+      sendMultiplayerState();
+    }
+  }
   for (let i = botRespawns.length - 1; i >= 0; i--) {
     botRespawns[i] -= dt;
     if (botRespawns[i] <= 0) {
@@ -3436,7 +3765,13 @@ function update(dt) {
       botRespawns.splice(i, 1);
     }
   }
-  for (const player of players) updatePlayer(player, dt);
+  for (const player of players) {
+    if (player.isRemote) {
+      updateRemotePlayer(player, dt);
+    } else {
+      updatePlayer(player, dt);
+    }
+  }
   updateWave(dt);
   updateBullets(dt);
   updateLaserBeam(dt);
