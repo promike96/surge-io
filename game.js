@@ -234,7 +234,9 @@ const MAX_PLAYERS = 15;
 const MAX_PLAYERS_TDM = 14;
 const MULTIPLAYER_CONFIG = {
   defaultUrl: "wss://surge-io-production.up.railway.app",
-  stateInterval: 0.05,
+  stateInterval: 0.03,
+  smoothing: 14,
+  snapDistance: 220,
 };
 const GAME_MODES = {
   multiplayer: { id: "multiplayer", label: "Multiplayer Arena" },
@@ -694,16 +696,22 @@ function buildSkinFromNetwork(data) {
 
 function applyRemoteState(player, state) {
   if (!player || !state || typeof state !== "object") return;
-  if (typeof state.x === "number") player.x = state.x;
-  if (typeof state.y === "number") player.y = state.y;
-  if (typeof state.vx === "number") player.vx = state.vx;
-  if (typeof state.vy === "number") player.vy = state.vy;
+  if (!player.net) player.net = { target: null };
+  if (typeof state.x === "number" && typeof state.y === "number") {
+    player.net.target = {
+      x: state.x,
+      y: state.y,
+      vx: typeof state.vx === "number" ? state.vx : player.vx,
+      vy: typeof state.vy === "number" ? state.vy : player.vy,
+      aim:
+        state.aim && typeof state.aim.x === "number" && typeof state.aim.y === "number"
+          ? { x: state.aim.x, y: state.aim.y }
+          : null,
+    };
+  }
   if (typeof state.energy === "number") player.energy = state.energy;
   if (typeof state.health === "number") player.health = state.health;
   if (typeof state.radius === "number") player.radius = state.radius;
-  if (state.aim && typeof state.aim.x === "number" && typeof state.aim.y === "number") {
-    player.aim = { x: state.aim.x, y: state.aim.y };
-  }
   if (typeof state.firing === "boolean") player.firing = state.firing;
   if (typeof state.shooting === "boolean") player.shooting = state.shooting;
   if (typeof state.bracing === "boolean") player.bracing = state.bracing;
@@ -742,6 +750,7 @@ function ensureRemotePlayer(playerData) {
   remote.id = playerData.id || remote.id;
   remote.isBot = false;
   remote.isRemote = true;
+  remote.net = { target: null };
   remote.botTuning = null;
   players.push(remote);
   return remote;
@@ -1699,6 +1708,11 @@ function randRange(min, max) {
   return Math.random() * (max - min) + min;
 }
 
+function smoothValue(current, target, dt, rate) {
+  const blend = 1 - Math.exp(-rate * dt);
+  return current + (target - current) * blend;
+}
+
 function dist(a, b) {
   const dx = a.x - b.x;
   const dy = a.y - b.y;
@@ -2125,6 +2139,8 @@ function createPlayer(name, isLocal = false, skin = null, handShieldColor = null
     name,
     isLocal,
     isBot: !isLocal,
+    isRemote: false,
+    net: null,
     team,
     botTuning: isLocal ? null : getBotTuning(currentBotDifficulty),
     color,
@@ -3740,8 +3756,29 @@ function respawn(player) {
 
 function updateRemotePlayer(player, dt) {
   if (!player) return;
-  player.x += player.vx * dt;
-  player.y += player.vy * dt;
+  const target = player.net ? player.net.target : null;
+  if (target && typeof target.x === "number" && typeof target.y === "number") {
+    const dx = target.x - player.x;
+    const dy = target.y - player.y;
+    const dist = Math.hypot(dx, dy);
+    if (dist > MULTIPLAYER_CONFIG.snapDistance) {
+      player.x = target.x;
+      player.y = target.y;
+    } else {
+      player.x = smoothValue(player.x, target.x, dt, MULTIPLAYER_CONFIG.smoothing);
+      player.y = smoothValue(player.y, target.y, dt, MULTIPLAYER_CONFIG.smoothing);
+    }
+    if (typeof target.vx === "number") player.vx = target.vx;
+    if (typeof target.vy === "number") player.vy = target.vy;
+    if (target.aim) {
+      const ax = smoothValue(player.aim.x, target.aim.x, dt, MULTIPLAYER_CONFIG.smoothing);
+      const ay = smoothValue(player.aim.y, target.aim.y, dt, MULTIPLAYER_CONFIG.smoothing);
+      player.aim = normalize(ax, ay);
+    }
+  } else {
+    player.x += player.vx * dt;
+    player.y += player.vy * dt;
+  }
   if (player.x < 0 || player.x > CONFIG.world.w || player.y < 0 || player.y > CONFIG.world.h) {
     player.x = clamp(player.x, 0, CONFIG.world.w);
     player.y = clamp(player.y, 0, CONFIG.world.h);
