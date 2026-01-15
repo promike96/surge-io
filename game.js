@@ -233,7 +233,7 @@ const PERSIST_SETTINGS = true;
 const MAX_PLAYERS = 15;
 const MAX_PLAYERS_TDM = 14;
 const MULTIPLAYER_CONFIG = {
-  defaultUrl: "",
+  defaultUrl: "wss://surge-io-production.up.railway.app",
   stateInterval: 0.05,
 };
 const GAME_MODES = {
