@@ -64,6 +64,13 @@
             <span>Name</span>
             <input id="nameInput" type="text" maxlength="16" placeholder="Pilot" />
           </label>
+          <label class="menu-field">
+            <span>Match Type</span>
+            <select id="playTypeSelect">
+              <option value="bots" selected>Bots</option>
+              <option value="multiplayer">Multiplayer</option>
+            </select>
+          </label>
           <div class="menu-field">
             <span>Remember</span>
             <label class="toggle" for="rememberToggle">
@@ -93,10 +100,9 @@
             </div>
           </div>
           <label class="menu-field">
-            <span>Mode</span>
+            <span>Game Mode</span>
             <select id="modeSelect">
               <option value="energy">Energy Rush (First to 10,000)</option>
-              <option value="multiplayer">Multiplayer Arena (15 player cap)</option>
               <option value="kills">Kill Race (First to 30 kills)</option>
               <option value="hill">King of the Hill (3:00, most kills)</option>
               <option value="tdm">Team Deathmatch (Red vs Blue)</option>

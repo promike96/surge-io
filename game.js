@@ -42,6 +42,7 @@ const sfxToggle = document.getElementById("sfxToggle");
 const musicVolume = document.getElementById("musicVolume");
 const sfxVolume = document.getElementById("sfxVolume");
 const nameInput = document.getElementById("nameInput");
+const playTypeSelect = document.getElementById("playTypeSelect");
 const rememberToggle = document.getElementById("rememberToggle");
 const colorInput = document.getElementById("colorInput");
 const modeSelect = document.getElementById("modeSelect");
@@ -240,14 +241,18 @@ const MULTIPLAYER_CONFIG = {
   smoothing: 14,
   snapDistance: 260,
 };
+const PLAY_TYPES = {
+  bots: "bots",
+  multiplayer: "multiplayer",
+};
 const GAME_MODES = {
-  multiplayer: { id: "multiplayer", label: "Multiplayer Arena" },
   energy: { id: "energy", label: "Energy Rush" },
   kills: { id: "kills", label: "Kill Race" },
   hill: { id: "hill", label: "King of the Hill" },
   tdm: { id: "tdm", label: "Team Deathmatch" },
 };
 let selectedModeId = "energy";
+let selectedPlayType = PLAY_TYPES.bots;
 const BOT_DIFFICULTY = {
   easy: "easy",
   normal: "normal",
@@ -328,7 +333,7 @@ function formatNumber(value) {
 }
 
 function isMultiplayerMode() {
-  return selectedModeId === "multiplayer";
+  return selectedPlayType === PLAY_TYPES.multiplayer;
 }
 
 function isKillMode() {
@@ -344,7 +349,7 @@ function isTdmMode() {
 }
 
 function isEnergyMode() {
-  return selectedModeId === "energy" || isMultiplayerMode();
+  return selectedModeId === "energy";
 }
 
 function getModePlayerCap() {
@@ -352,39 +357,37 @@ function getModePlayerCap() {
 }
 
 function getModeStatusText() {
+  const matchType = isMultiplayerMode() ? "Multiplayer" : "Bots";
+  const cap = getModePlayerCap();
+  const fillNote = isMultiplayerMode() ? "Bots fill empty slots." : "Bots only.";
   if (isTdmMode()) {
     return gameActive
-      ? `Team Deathmatch: ${getTeamScoreText()}. First to ${CONFIG.winTeamKills} team kills.`
-      : `Team Deathmatch: First to ${CONFIG.winTeamKills} team kills.`;
-  }
-  if (isMultiplayerMode()) {
-    const cap = getModePlayerCap();
-    return `Multiplayer Arena: ${cap} pilots max. Bots fill open slots. First to ${formatNumber(CONFIG.winEnergy)} energy wins.`;
+      ? `${matchType}: Team Deathmatch ${getTeamScoreText()}. First to ${CONFIG.winTeamKills} team kills.`
+      : `${matchType}: Team Deathmatch. First to ${CONFIG.winTeamKills} team kills. ${fillNote}`;
   }
   if (isHillMode()) {
-    return `King of the Hill: ${formatTime(HILL_DURATION)}. Most kills wins.`;
+    return `${matchType}: King of the Hill ${formatTime(HILL_DURATION)}. Most kills wins. ${fillNote}`;
   }
   if (isKillMode()) {
-    return `First to ${CONFIG.winKills} kills wins.`;
+    return `${matchType}: First to ${CONFIG.winKills} kills wins. ${fillNote}`;
   }
-  return `First to ${formatNumber(CONFIG.winEnergy)} energy wins.`;
+  return `${matchType}: ${cap} pilots max. ${fillNote} First to ${formatNumber(CONFIG.winEnergy)} energy wins.`;
 }
 
 function getModeHintText() {
+  const matchType = isMultiplayerMode() ? "Multiplayer" : "Bots";
+  const cap = getModePlayerCap();
+  const fillNote = isMultiplayerMode() ? "Bots fill empty slots." : "Bots only.";
   if (isTdmMode()) {
-    return `Team Deathmatch: Red vs Blue. First to ${CONFIG.winTeamKills} team kills wins.`;
-  }
-  if (isMultiplayerMode()) {
-    const cap = getModePlayerCap();
-    return `Multiplayer Arena: ${cap} pilots max. Bots fill open slots. First to ${formatNumber(CONFIG.winEnergy)} energy wins.`;
+    return `${matchType}: Team Deathmatch. First to ${CONFIG.winTeamKills} team kills wins. ${fillNote}`;
   }
   if (isHillMode()) {
-    return `King of the Hill: ${formatTime(HILL_DURATION)}. Most kills wins.`;
+    return `${matchType}: King of the Hill ${formatTime(HILL_DURATION)}. Most kills wins. ${fillNote}`;
   }
   if (isKillMode()) {
-    return `First to ${CONFIG.winKills} kills wins the match.`;
+    return `${matchType}: First to ${CONFIG.winKills} kills wins the match. ${fillNote}`;
   }
-  return `First to ${formatNumber(CONFIG.winEnergy)} energy wins the match.`;
+  return `${matchType}: ${cap} pilots max. ${fillNote} First to ${formatNumber(CONFIG.winEnergy)} energy wins.`;
 }
 
 function getModeVictoryDetail(winner) {
@@ -511,6 +514,14 @@ function buildPostMatchBreakdown(winnerName) {
 
 function updateMenuStatus() {
   if (menuStatus && menuMode === "start") menuStatus.textContent = getModeStatusText();
+}
+
+function setSelectedPlayType(playType) {
+  if (!PLAY_TYPES[playType]) return;
+  selectedPlayType = playType;
+  if (playTypeSelect && playTypeSelect.value !== playType) playTypeSelect.value = playType;
+  updateMenuStatus();
+  updateMenuMode();
 }
 
 function setSelectedMode(modeId) {
@@ -902,6 +913,7 @@ function saveSettings() {
     skinId: selectedSkinId,
     skinColor: colorInput ? colorInput.value : palette[0],
     shieldColor: shieldColorInput ? shieldColorInput.value : selectedShieldColor,
+    playType: selectedPlayType,
     modeId: selectedModeId,
     botDifficulty: selectedBotDifficulty,
     musicEnabled: musicToggle ? musicToggle.checked : true,
@@ -933,6 +945,9 @@ function loadSettings() {
     if (typeof data.skinColor === "string" && colorInput) colorInput.value = data.skinColor;
     if (typeof data.shieldColor === "string" && shieldColorInput) {
       shieldColorInput.value = data.shieldColor;
+    }
+    if (typeof data.playType === "string" && PLAY_TYPES[data.playType]) {
+      setSelectedPlayType(data.playType);
     }
     if (typeof data.modeId === "string" && GAME_MODES[data.modeId]) {
       setSelectedMode(data.modeId);
@@ -1465,13 +1480,14 @@ function updateMenuMode() {
   nameInput.disabled = locked;
   if (rememberToggle) rememberToggle.disabled = locked;
   colorInput.disabled = locked;
+  if (playTypeSelect) playTypeSelect.disabled = locked;
   if (modeSelect) modeSelect.disabled = locked;
   if (botDifficultySelect) {
     if (botDifficultySelect.value !== selectedBotDifficulty) {
       botDifficultySelect.value = selectedBotDifficulty;
     }
     updateBotDifficultyStyle();
-    botDifficultySelect.disabled = locked;
+    botDifficultySelect.disabled = locked || isMultiplayerMode();
   }
   if (skinBtn) skinBtn.disabled = locked;
   if (locked && skinMenu) skinMenu.classList.remove("show");
@@ -1619,6 +1635,13 @@ if (rememberToggle) {
     saveSettings();
   });
 }
+if (playTypeSelect) {
+  playTypeSelect.addEventListener("change", () => {
+    playSfx("click");
+    setSelectedPlayType(playTypeSelect.value);
+    saveSettings();
+  });
+}
 if (modeSelect) {
   modeSelect.addEventListener("change", () => {
     playSfx("click");
@@ -1673,6 +1696,9 @@ if (endContinue) {
     });
   }
 loadSettings();
+if (playTypeSelect) {
+  playTypeSelect.value = selectedPlayType;
+}
 if (botDifficultySelect) {
   botDifficultySelect.value = selectedBotDifficulty;
   updateBotDifficultyStyle();
