@@ -115,10 +115,6 @@ const CONFIG = {
 };
 
 const MAX_PLAYERS = 15;
-const BULLET_GRID = {
-  size: 240,
-  range: 2,
-};
 
 const palette = [
   "#72e6ff",
@@ -343,24 +339,6 @@ function dist(a, b) {
 function normalize(x, y) {
   const len = Math.hypot(x, y) || 1;
   return { x: x / len, y: y / len };
-}
-
-function gridKey(x, y, size) {
-  return `${Math.floor(x / size)}:${Math.floor(y / size)}`;
-}
-
-function buildPlayerGrid(players, cellSize) {
-  const grid = new Map();
-  for (const player of players) {
-    const key = gridKey(player.x, player.y, cellSize);
-    const bucket = grid.get(key);
-    if (bucket) {
-      bucket.push(player);
-    } else {
-      grid.set(key, [player]);
-    }
-  }
-  return grid;
 }
 
 function canGainEnergy(player) {
@@ -995,19 +973,12 @@ function updateWave(state, dt) {
 }
 
 function updateBullets(state, dt) {
-  if (state.bullets.length === 0) return;
-  const playerById = new Map();
-  for (const player of state.players) {
-    playerById.set(player.id, player);
-  }
-  const grid = buildPlayerGrid(state.players, BULLET_GRID.size);
-  const range = BULLET_GRID.range;
   for (let i = state.bullets.length - 1; i >= 0; i--) {
     const bullet = state.bullets[i];
     bullet.ttl -= dt;
     bullet.x += bullet.vx * dt;
     bullet.y += bullet.vy * dt;
-    const owner = playerById.get(bullet.ownerId) || null;
+    const owner = state.players.find((p) => p.id === bullet.ownerId) || null;
 
     if (
       bullet.ttl <= 0 ||
@@ -1020,60 +991,45 @@ function updateBullets(state, dt) {
       continue;
     }
 
-    const cellX = Math.floor(bullet.x / BULLET_GRID.size);
-    const cellY = Math.floor(bullet.y / BULLET_GRID.size);
-    let removed = false;
-
-    for (let gx = cellX - range; gx <= cellX + range; gx++) {
-      for (let gy = cellY - range; gy <= cellY + range; gy++) {
-        const bucket = grid.get(`${gx}:${gy}`);
-        if (!bucket) continue;
-        for (const target of bucket) {
-          if (target.id === bullet.ownerId) continue;
-          if (target.shieldActive) {
-            const sx = bullet.x - target.x;
-            const sy = bullet.y - target.y;
-            const dist = Math.hypot(sx, sy);
-            const shieldRange = getShieldRange(target);
-            if (dist < shieldRange) {
-              const dir = normalize(sx, sy);
-              const dot = dir.x * target.aim.x + dir.y * target.aim.y;
-              if (dot > Math.cos(CONFIG.pulseShield.cone)) {
-                const damage = CONFIG.laserGun.damage;
-                const absorbed = Math.min(target.shieldCharge, damage);
-                target.shieldCharge = Math.max(0, target.shieldCharge - absorbed);
-                if (target.shieldCharge <= 0) target.shieldActive = false;
-                if (absorbed < damage) {
-                  applyDamage(state, target, damage - absorbed, owner);
-                }
-                state.bullets.splice(i, 1);
-                removed = true;
-                break;
-              }
-            }
-          }
-          const dx = target.x - bullet.x;
-          const dy = target.y - bullet.y;
-          const hitRadius = target.radius + 4;
-          if (dx * dx + dy * dy <= hitRadius * hitRadius) {
-            if (target.bracing) {
-              state.bullets.splice(i, 1);
-              removed = true;
-              break;
-            }
+    for (const target of state.players) {
+      if (target.id === bullet.ownerId) continue;
+      if (target.shieldActive) {
+        const sx = bullet.x - target.x;
+        const sy = bullet.y - target.y;
+        const dist = Math.hypot(sx, sy);
+        const range = getShieldRange(target);
+        if (dist < range) {
+          const dir = normalize(sx, sy);
+          const dot = dir.x * target.aim.x + dir.y * target.aim.y;
+          if (dot > Math.cos(CONFIG.pulseShield.cone)) {
             const damage = CONFIG.laserGun.damage;
-            if (owner) owner.shotsHit += 1;
-            applyDamage(state, target, damage, owner);
-            target.vx += (bullet.vx / CONFIG.laserGun.speed) * CONFIG.laserGun.knock;
-            target.vy += (bullet.vy / CONFIG.laserGun.speed) * CONFIG.laserGun.knock;
+            const absorbed = Math.min(target.shieldCharge, damage);
+            target.shieldCharge = Math.max(0, target.shieldCharge - absorbed);
+            if (target.shieldCharge <= 0) target.shieldActive = false;
+            if (absorbed < damage) {
+              applyDamage(state, target, damage - absorbed, owner);
+            }
             state.bullets.splice(i, 1);
-            removed = true;
             break;
           }
         }
-        if (removed) break;
       }
-      if (removed) break;
+      const dx = target.x - bullet.x;
+      const dy = target.y - bullet.y;
+      const hitRadius = target.radius + 4;
+      if (dx * dx + dy * dy <= hitRadius * hitRadius) {
+        if (target.bracing) {
+          state.bullets.splice(i, 1);
+          break;
+        }
+        const damage = CONFIG.laserGun.damage;
+        if (owner) owner.shotsHit += 1;
+        applyDamage(state, target, damage, owner);
+        target.vx += (bullet.vx / CONFIG.laserGun.speed) * CONFIG.laserGun.knock;
+        target.vy += (bullet.vy / CONFIG.laserGun.speed) * CONFIG.laserGun.knock;
+        state.bullets.splice(i, 1);
+        break;
+      }
     }
   }
 }

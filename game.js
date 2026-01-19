@@ -242,10 +242,6 @@ const MULTIPLAYER_CONFIG = {
   snapDistance: 260,
 };
 const TRAILS_ENABLED = false;
-const BULLET_GRID = {
-  size: 240,
-  range: 2,
-};
 const PLAY_TYPES = {
   bots: "bots",
   multiplayer: "multiplayer",
@@ -1839,24 +1835,6 @@ function colorWithAlpha(color, alpha) {
 function normalize(x, y) {
   const len = Math.hypot(x, y) || 1;
   return { x: x / len, y: y / len };
-}
-
-function gridKey(x, y, size) {
-  return `${Math.floor(x / size)}:${Math.floor(y / size)}`;
-}
-
-function buildPlayerGrid(playersList, cellSize) {
-  const grid = new Map();
-  for (const player of playersList) {
-    const key = gridKey(player.x, player.y, cellSize);
-    const bucket = grid.get(key);
-    if (bucket) {
-      bucket.push(player);
-    } else {
-      grid.set(key, [player]);
-    }
-  }
-  return grid;
 }
 
 function getEnergyBoost(energy) {
@@ -3526,19 +3504,12 @@ function tryFireGun(player) {
 }
 
 function updateBullets(dt) {
-  if (bullets.length === 0) return;
-  const playerById = new Map();
-  for (const player of players) {
-    playerById.set(player.id, player);
-  }
-  const grid = buildPlayerGrid(players, BULLET_GRID.size);
-  const range = BULLET_GRID.range;
   for (let i = bullets.length - 1; i >= 0; i--) {
     const bullet = bullets[i];
     bullet.ttl -= dt;
     bullet.x += bullet.vx * dt;
     bullet.y += bullet.vy * dt;
-    const owner = playerById.get(bullet.ownerId) || null;
+    const owner = players.find((p) => p.id === bullet.ownerId) || null;
 
     if (
       bullet.ttl <= 0 ||
@@ -3551,78 +3522,63 @@ function updateBullets(dt) {
       continue;
     }
 
-    const cellX = Math.floor(bullet.x / BULLET_GRID.size);
-    const cellY = Math.floor(bullet.y / BULLET_GRID.size);
-    let removed = false;
-
-    for (let gx = cellX - range; gx <= cellX + range; gx++) {
-      for (let gy = cellY - range; gy <= cellY + range; gy++) {
-        const bucket = grid.get(`${gx}:${gy}`);
-        if (!bucket) continue;
-        for (const target of bucket) {
-          if (target.id === bullet.ownerId) continue;
-          if (
-            isTdmMode() &&
-            owner &&
-            owner.team &&
-            target.team &&
-            owner.team === target.team
-          ) {
-            continue;
-          }
-          if (target.shieldActive) {
-            const sx = bullet.x - target.x;
-            const sy = bullet.y - target.y;
-            const dist = Math.hypot(sx, sy);
-            const shieldRange = getShieldRange(target);
-            if (dist < shieldRange) {
-              const dir = normalize(sx, sy);
-              const dot = dir.x * target.aim.x + dir.y * target.aim.y;
-              if (dot > Math.cos(CONFIG.pulseShield.cone)) {
-                hitBursts.push({ x: bullet.x, y: bullet.y, ttl: CONFIG.hit.ttl });
-                if (target.isLocal) playSfx("shieldBlock");
-                playHitMarker(owner);
-                playHitMarker(target);
-                const damage = CONFIG.laserGun.damage;
-                const absorbed = Math.min(target.shieldCharge, damage);
-                target.shieldCharge = Math.max(0, target.shieldCharge - absorbed);
-                if (target.shieldCharge <= 0) target.shieldActive = false;
-                if (absorbed < damage) {
-                  applyDamage(target, damage - absorbed, owner);
-                }
-                bullets.splice(i, 1);
-                removed = true;
-                break;
-              }
-            }
-          }
-          const dx = target.x - bullet.x;
-          const dy = target.y - bullet.y;
-          const hitRadius = target.radius + 4;
-          if (dx * dx + dy * dy <= hitRadius * hitRadius) {
-            if (target.bracing) {
-              hitBursts.push({ x: bullet.x, y: bullet.y, ttl: CONFIG.hit.ttl });
-              playHitMarker(owner);
-              playHitMarker(target);
-              bullets.splice(i, 1);
-              removed = true;
-              break;
-            }
-            const damage = CONFIG.laserGun.damage;
-            if (owner) owner.shotsHit += 1;
-            applyDamage(target, damage, owner);
-            target.vx += (bullet.vx / CONFIG.laserGun.speed) * CONFIG.laserGun.knock;
-            target.vy += (bullet.vy / CONFIG.laserGun.speed) * CONFIG.laserGun.knock;
+    for (const target of players) {
+      if (target.id === bullet.ownerId) continue;
+      if (
+        isTdmMode() &&
+        owner &&
+        owner.team &&
+        target.team &&
+        owner.team === target.team
+      ) {
+        continue;
+      }
+      if (target.shieldActive) {
+        const sx = bullet.x - target.x;
+        const sy = bullet.y - target.y;
+        const dist = Math.hypot(sx, sy);
+        const range = getShieldRange(target);
+        if (dist < range) {
+          const dir = normalize(sx, sy);
+          const dot = dir.x * target.aim.x + dir.y * target.aim.y;
+          if (dot > Math.cos(CONFIG.pulseShield.cone)) {
             hitBursts.push({ x: bullet.x, y: bullet.y, ttl: CONFIG.hit.ttl });
-
+            if (target.isLocal) playSfx("shieldBlock");
+            playHitMarker(owner);
+            playHitMarker(target);
+            const damage = CONFIG.laserGun.damage;
+            const absorbed = Math.min(target.shieldCharge, damage);
+            target.shieldCharge = Math.max(0, target.shieldCharge - absorbed);
+            if (target.shieldCharge <= 0) target.shieldActive = false;
+            if (absorbed < damage) {
+              applyDamage(target, damage - absorbed, owner);
+            }
             bullets.splice(i, 1);
-            removed = true;
             break;
           }
         }
-        if (removed) break;
       }
-      if (removed) break;
+      const dx = target.x - bullet.x;
+      const dy = target.y - bullet.y;
+      const hitRadius = target.radius + 4;
+      if (dx * dx + dy * dy <= hitRadius * hitRadius) {
+        if (target.bracing) {
+          hitBursts.push({ x: bullet.x, y: bullet.y, ttl: CONFIG.hit.ttl });
+          playHitMarker(owner);
+          playHitMarker(target);
+          bullets.splice(i, 1);
+          break;
+        }
+        const damage = CONFIG.laserGun.damage;
+        if (owner) owner.shotsHit += 1;
+        applyDamage(target, damage, owner);
+        target.vx += (bullet.vx / CONFIG.laserGun.speed) * CONFIG.laserGun.knock;
+        target.vy += (bullet.vy / CONFIG.laserGun.speed) * CONFIG.laserGun.knock;
+        hitBursts.push({ x: bullet.x, y: bullet.y, ttl: CONFIG.hit.ttl });
+
+        bullets.splice(i, 1);
+        break;
+      }
     }
   }
 }
