@@ -124,6 +124,16 @@ const palette = [
   "#b69cff",
   "#ff8fd8",
 ];
+const TRAILS_ENABLED = false;
+const SKINS = [
+  { id: "custom", type: "color", accent: palette[0] },
+  { id: "darkVoid", type: "image", accent: "#b69cff" },
+  { id: "galexyMatter", type: "image", accent: "#72e6ff" },
+  { id: "bioVoid", type: "image", accent: "#7affc7" },
+  { id: "arcReactor", type: "image", accent: "#7ad6ff" },
+  { id: "fusionNexus", type: "image", accent: "#8fd2ff" },
+  { id: "skin5", type: "image", accent: "#ff9f7a" },
+];
 
 const BOT_DIFFICULTY = {
   normal: "normal",
@@ -371,11 +381,36 @@ function makeColorSkin(color) {
   return { id: "custom", type: "color", color, accent: color };
 }
 
+function getSkinById(id) {
+  return SKINS.find((skin) => skin.id === id) || null;
+}
+
+function makeSkinFromProfile(profile) {
+  const skinId = profile && profile.skinId;
+  if (skinId === "custom") {
+    const color = profile && profile.skinColor ? profile.skinColor : palette[0];
+    return makeColorSkin(color);
+  }
+  if (skinId) {
+    const skin = getSkinById(skinId);
+    if (skin && skin.type === "image") {
+      return { id: skin.id, type: "image", accent: skin.accent || palette[0] };
+    }
+  }
+  const fallback = profile && profile.skinColor ? profile.skinColor : palette[0];
+  return makeColorSkin(fallback);
+}
+
 function getRandomBotName() {
   return botNames[Math.floor(Math.random() * botNames.length)];
 }
 
 function getRandomBotSkin() {
+  const imageSkins = SKINS.filter((skin) => skin.type === "image");
+  if (imageSkins.length) {
+    const skin = imageSkins[Math.floor(Math.random() * imageSkins.length)];
+    return { id: skin.id, type: "image", accent: skin.accent || palette[0] };
+  }
   const color = palette[Math.floor(Math.random() * palette.length)];
   return makeColorSkin(color);
 }
@@ -862,7 +897,7 @@ function updatePlayer(state, player, dt) {
 
   player.trailTimer += dt;
   const moved = Math.hypot(player.x - player.lastTrail.x, player.y - player.lastTrail.y);
-  if (player.trailTimer >= CONFIG.trail.interval || moved > CONFIG.trail.minDist) {
+  if (TRAILS_ENABLED && (player.trailTimer >= CONFIG.trail.interval || moved > CONFIG.trail.minDist)) {
     player.trailTimer = 0;
     player.lastTrail.x = player.x;
     player.lastTrail.y = player.y;
@@ -1073,6 +1108,10 @@ function updatePowerups(state, dt) {
 }
 
 function updateTrails(state, dt) {
+  if (!TRAILS_ENABLED) {
+    state.trailSegments.length = 0;
+    return;
+  }
   for (let i = state.trailSegments.length - 1; i >= 0; i--) {
     const seg = state.trailSegments[i];
     seg.ttl -= dt;
@@ -1408,14 +1447,7 @@ function createGame() {
   return {
     state,
     addPlayer(profile) {
-      let skin = null;
-      if (profile && profile.skinId && profile.skinId !== "custom") {
-        const accent = typeof profile.skinColor === "string" ? profile.skinColor : palette[0];
-        skin = { id: profile.skinId, type: "image", accent };
-      } else {
-        const color = profile && profile.skinColor ? profile.skinColor : palette[0];
-        skin = makeColorSkin(color);
-      }
+      const skin = makeSkinFromProfile(profile || {});
       const player = createPlayer(profile.name || "Pilot", false, skin, profile.shieldColor);
       if (profile.id) player.id = profile.id;
       assignSpawn(state, player);

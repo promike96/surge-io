@@ -241,6 +241,7 @@ const MULTIPLAYER_CONFIG = {
   smoothing: 14,
   snapDistance: 260,
 };
+const TRAILS_ENABLED = false;
 const PLAY_TYPES = {
   bots: "bots",
   multiplayer: "multiplayer",
@@ -3385,26 +3386,28 @@ function updatePlayer(player, dt) {
     player.vy *= -0.4;
   }
 
-  player.trailTimer += dt;
-  const moved = Math.hypot(player.x - player.lastTrail.x, player.y - player.lastTrail.y);
-  if (player.trailTimer >= CONFIG.trail.interval || moved > CONFIG.trail.minDist) {
-    player.trailTimer = 0;
-    player.lastTrail.x = player.x;
-    player.lastTrail.y = player.y;
-    const zoneHere = zoneAt(player.x, player.y);
-    const tempoMult = player.tempoTime > 0 ? CONFIG.tempo.trailMult : 1;
-    const surgeHot = false;
-    const ttlBase = zoneHere && zoneHere.trailTtl ? zoneHere.trailTtl : CONFIG.trail.baseTtl;
-    const ttl = surgeHot ? Math.min(ttlBase, CONFIG.trail.surgeTtl) : ttlBase;
-    trailSegments.push({
-      x: player.x,
-      y: player.y,
-      ownerId: player.id,
-      ttl,
-      ttlMax: ttl,
-      value: CONFIG.trail.value * tempoMult * (surgeHot ? CONFIG.trail.surgeValue : 1),
-      hot: surgeHot,
-    });
+  if (TRAILS_ENABLED) {
+    player.trailTimer += dt;
+    const moved = Math.hypot(player.x - player.lastTrail.x, player.y - player.lastTrail.y);
+    if (player.trailTimer >= CONFIG.trail.interval || moved > CONFIG.trail.minDist) {
+      player.trailTimer = 0;
+      player.lastTrail.x = player.x;
+      player.lastTrail.y = player.y;
+      const zoneHere = zoneAt(player.x, player.y);
+      const tempoMult = player.tempoTime > 0 ? CONFIG.tempo.trailMult : 1;
+      const surgeHot = false;
+      const ttlBase = zoneHere && zoneHere.trailTtl ? zoneHere.trailTtl : CONFIG.trail.baseTtl;
+      const ttl = surgeHot ? Math.min(ttlBase, CONFIG.trail.surgeTtl) : ttlBase;
+      trailSegments.push({
+        x: player.x,
+        y: player.y,
+        ownerId: player.id,
+        ttl,
+        ttlMax: ttl,
+        value: CONFIG.trail.value * tempoMult * (surgeHot ? CONFIG.trail.surgeValue : 1),
+        hot: surgeHot,
+      });
+    }
   }
 
   player.radius =
@@ -3675,6 +3678,10 @@ function updatePowerups(dt) {
 }
 
 function updateTrails(dt) {
+  if (!TRAILS_ENABLED) {
+    trailSegments.length = 0;
+    return;
+  }
   for (let i = trailSegments.length - 1; i >= 0; i--) {
     const seg = trailSegments[i];
     seg.ttl -= dt;
@@ -3723,7 +3730,7 @@ function updateRelays(dt) {
         player.tempoTime = CONFIG.tempo.duration;
         relay.active = false;
         relay.respawn = CONFIG.relays.respawn;
-        if (player.isLocal) addHint("Relay captured. Trails surge for a moment.", 3);
+        if (player.isLocal) addHint("Relay captured. Tempo boost active.", 3);
         break;
       }
     }
@@ -4007,6 +4014,10 @@ function updateBulletsVisual(dt) {
 }
 
 function updateTrailsVisual(dt) {
+  if (!TRAILS_ENABLED) {
+    trailSegments.length = 0;
+    return;
+  }
   for (const player of players) {
     player.trailTimer += dt;
     const moved = Math.hypot(player.x - player.lastTrail.x, player.y - player.lastTrail.y);
@@ -4375,6 +4386,7 @@ function renderBackground(cam) {
 }
 
 function renderTrails(cam) {
+  if (!TRAILS_ENABLED) return;
   ctx.save();
   ctx.translate(width / 2 - cam.x, height / 2 - cam.y);
   for (const seg of trailSegments) {
